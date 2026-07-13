@@ -6,11 +6,28 @@
  */
 
 declare module "openclaw/plugin-sdk" {
+  import type { IncomingMessage, ServerResponse } from "node:http";
+
+  /** Plugin-owned HTTP route handler; return true once the response has been written. */
+  export type OpenClawPluginHttpRouteHandler = (
+    req: IncomingMessage,
+    res: ServerResponse
+  ) => Promise<boolean | void> | boolean | void;
+
+  export interface OpenClawPluginHttpRouteParams {
+    path: string;
+    handler: OpenClawPluginHttpRouteHandler;
+    /** "gateway" requires OpenClaw's own gateway auth; "plugin" means the handler authenticates itself. */
+    auth: "gateway" | "plugin";
+    match?: "exact" | "prefix";
+    replaceExisting?: boolean;
+  }
+
   /** Plugin API provided to plugins during registration */
   export interface OpenClawPluginApi {
     registerChannel(opts: { plugin: ChannelPlugin<unknown> }): void;
     registerGatewayMethod(name: string, handler: unknown): void;
-    registerHttpHandler(opts: unknown): void;
+    registerHttpRoute(params: OpenClawPluginHttpRouteParams): void;
     registerCli(callback: unknown, opts?: { commands: string[] }): void;
     registerService(service: unknown): void;
     logger: {

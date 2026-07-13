@@ -73,7 +73,7 @@ describe('index exports', () => {
       // Create a mock api object
       const mockApi = {
         registerChannel: vi.fn(),
-        registerHttpHandler: vi.fn(),
+        registerHttpRoute: vi.fn(),
         runtime: {},
       };
 
@@ -83,8 +83,16 @@ describe('index exports', () => {
       // Verify registerChannel was called with the webexPlugin
       expect(mockApi.registerChannel).toHaveBeenCalledTimes(1);
       expect(mockApi.registerChannel).toHaveBeenCalledWith({ plugin: webexPlugin });
-      // Verify registerHttpHandler was called
-      expect(mockApi.registerHttpHandler).toHaveBeenCalledTimes(1);
+      // Verify registerHttpRoute was called
+      expect(mockApi.registerHttpRoute).toHaveBeenCalledTimes(1);
+      expect(mockApi.registerHttpRoute).toHaveBeenCalledWith(
+        expect.objectContaining({
+          path: '/webhooks/webex',
+          match: 'prefix',
+          auth: 'plugin',
+          handler: expect.any(Function),
+        })
+      );
     });
   });
 

@@ -19,7 +19,12 @@ export default function register(api: OpenClawPluginApi): void {
   setPluginRuntime(api.runtime);
   
   api.registerChannel({ plugin: webexPlugin });
-  api.registerHttpHandler(createWebhookHandler());
+  api.registerHttpRoute({
+    path: "/webhooks/webex",
+    match: "prefix",
+    auth: "plugin",
+    handler: createWebhookHandler(),
+  });
 }
 
 // Export the plugin ID for reference

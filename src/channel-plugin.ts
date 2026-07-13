@@ -636,7 +636,7 @@ export const webexPlugin: ChannelPlugin<ResolvedWebexAccount> = {
 
   gateway: {
     startAccount: async (ctx) => {
-      const { account, runtime, log, setStatus } = ctx;
+      const { account, runtime, log, setStatus, abortSignal } = ctx;
 
       setStatus({
         accountId: account.accountId,
@@ -674,11 +674,20 @@ export const webexPlugin: ChannelPlugin<ResolvedWebexAccount> = {
         `[${account.accountId}] HTTP webhook handler registered at ${webhookPath}`
       );
 
-      // Return cleanup function
-      return async () => {
-        log?.info?.(`[${account.accountId}] stopping Webex provider`);
-        unregister();
-      };
+      // Webhook delivery is push-based: there's no connection to hold open, but the
+      // gateway's account supervisor treats *any* resolution of this promise (even a
+      // successful one) as the channel having exited, and auto-restarts it. So we must
+      // stay pending until the gateway signals this account is stopping.
+      await new Promise<void>((resolve) => {
+        if (abortSignal?.aborted) {
+          resolve();
+          return;
+        }
+        abortSignal?.addEventListener("abort", () => resolve(), { once: true });
+      });
+
+      log?.info?.(`[${account.accountId}] stopping Webex provider`);
+      unregister();
     },
   },
 };
