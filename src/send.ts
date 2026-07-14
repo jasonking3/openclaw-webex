@@ -11,6 +11,7 @@ import type {
   WebexApiError,
   RetryOptions,
   RequestOptions,
+  AdaptiveCard,
 } from './types';
 
 const DEFAULT_API_BASE_URL = 'https://webexapis.com/v1';
@@ -19,6 +20,42 @@ const DEFAULT_RETRY_DELAY_MS = 1000;
 
 // Rate limit status codes that should trigger retry
 const RETRY_STATUS_CODES = [429, 502, 503, 504];
+
+/**
+ * Webex rejects Adaptive Cards with version > 1.3 (or a missing/malformed
+ * version string), so clamp/normalize the version before sending.
+ */
+function normalizeAdaptiveCard(card: AdaptiveCard): AdaptiveCard {
+  const version = typeof card.version === 'string' ? card.version.trim() : '';
+  if (!version) return { ...card, version: '1.3' };
+  const match = /^(\d+)\.(\d+)$/.exec(version);
+  if (!match) return { ...card, version: '1.3' };
+  const major = Number(match[1]);
+  const minor = Number(match[2]);
+  if (major > 1 || (major === 1 && minor > 3)) return { ...card, version: '1.3' };
+  return card;
+}
+
+/**
+ * Webex requires a plain-text `text` field alongside any card attachment
+ * (for notification previews and non-card clients). Walk the card body for
+ * the first TextBlock and use it as the fallback text.
+ */
+function extractAdaptiveCardFallbackText(card: AdaptiveCard): string {
+  const body = Array.isArray(card.body) ? card.body : [];
+  for (const block of body) {
+    if (
+      block &&
+      typeof block === 'object' &&
+      (block as { type?: unknown }).type === 'TextBlock' &&
+      typeof (block as { text?: unknown }).text === 'string'
+    ) {
+      const text = ((block as { text: string }).text).trim();
+      if (text) return text.slice(0, 7439); // enforce Webex 7439-byte text limit
+    }
+  }
+  return 'Interactive card';
+}
 
 export class WebexSender {
   private config: WebexChannelConfig;
@@ -173,9 +210,12 @@ export class WebexSender {
       request.attachments = [
         {
           contentType: 'application/vnd.microsoft.card.adaptive',
-          content: message.content.card,
+          content: normalizeAdaptiveCard(message.content.card),
         },
       ];
+      if (!request.text && !request.markdown) {
+        request.text = extractAdaptiveCardFallbackText(message.content.card);
+      }
     }
 
     // Set threading
