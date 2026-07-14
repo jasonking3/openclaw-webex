@@ -13,7 +13,7 @@ import type {
 
 import { WebexSender } from "./send";
 import { WebexWebhookHandler } from "./webhook";
-import type { WebexChannelConfig, WebexWebhookPayload } from "./types";
+import type { AdaptiveCard, WebexChannelConfig, WebexWebhookPayload } from "./types";
 
 // Store the plugin runtime for use in HTTP handlers
 let pluginRuntime: PluginRuntime | null = null;
@@ -533,6 +533,62 @@ export const webexPlugin: ChannelPlugin<ResolvedWebexAccount> = {
           text,
           files: mediaUrl ? [mediaUrl] : undefined,
         },
+        parentId: replyToId,
+      });
+
+      return {
+        channel: "webex",
+        messageId: result.id,
+        roomId: result.roomId,
+      };
+    },
+
+    sendPayload: async ({ to, payload, text, account, replyToId }: { to: string; payload: { text?: string; channelData?: Record<string, unknown> }; text?: string; account: ResolvedWebexAccount; replyToId?: string }) => {
+      const sender = new WebexSender(account.config);
+
+      const blocks = (payload?.channelData?.webex as Record<string, unknown>)?.blocks as unknown[] | undefined;
+      if (blocks) {
+        // Core passes blocks via channelData; route to WebexSender as AdaptiveCard
+        const card = {
+          type: "AdaptiveCard",
+          version: "1.3",
+          body: blocks,
+        } as AdaptiveCard;
+        const result = await sender.send({
+          to,
+          content: { card, text },
+          parentId: replyToId,
+        });
+        return {
+          channel: "webex",
+          messageId: result.id,
+          roomId: result.roomId,
+        } as { channel: string; messageId?: string; roomId?: string };
+      }
+
+      // Fallback: send as plain text if no blocks
+      const fallbackText = text ?? payload?.text ?? "";
+      if (fallbackText) {
+        const result = await sender.send({
+          to,
+          content: { text: fallbackText },
+          parentId: replyToId,
+        });
+        return {
+          channel: "webex",
+          messageId: result.id,
+          roomId: result.roomId,
+        } as { channel: string; messageId?: string; roomId?: string };
+      }
+      return { channel: "webex" };
+    },
+
+    sendCard: async ({ to, card, text, account, replyToId }) => {
+      const sender = new WebexSender(account.config);
+
+      const result = await sender.send({
+        to,
+        content: { card: card as AdaptiveCard, text },
         parentId: replyToId,
       });
 
