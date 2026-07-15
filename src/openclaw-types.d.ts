@@ -245,19 +245,6 @@ declare module "openclaw/plugin-sdk" {
       roomId?: string;
       pollId?: string;
     }>;
-    sendCard?(opts: {
-      to: string;
-      card: unknown;
-      text?: string;
-      account: TAccount;
-      deps?: unknown;
-      replyToId?: string;
-      threadId?: string | number;
-    }): Promise<{
-      channel: string;
-      messageId?: string;
-      roomId?: string;
-    }>;
   }
 
   export interface ChannelStatusAdapter<TAccount> {
