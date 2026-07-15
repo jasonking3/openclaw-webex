@@ -2,7 +2,7 @@
  * Tests for index exports
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import * as exports from './index';
 import defaultExport, {
   id,
@@ -15,25 +15,6 @@ import defaultExport, {
   WebhookValidationError,
   webexPlugin,
 } from './index';
-import type { ResolvedWebexAccount } from './channel-plugin';
-
-// Mock node-fetch for the outbound-adapter behavioral tests below
-vi.mock('node-fetch', () => ({
-  default: vi.fn(),
-  Response: vi.fn(),
-}));
-
-import fetch from 'node-fetch';
-const mockFetch = fetch as unknown as ReturnType<typeof vi.fn>;
-
-function createMockResponse(data: unknown) {
-  return {
-    ok: true,
-    status: 200,
-    statusText: 'OK',
-    json: vi.fn().mockResolvedValue(data),
-  };
-}
 
 describe('index exports', () => {
   describe('named exports', () => {
@@ -187,103 +168,6 @@ describe('index exports', () => {
 
       it('should have sendMedia function', () => {
         expect(typeof webexPlugin.outbound.sendMedia).toBe('function');
-      });
-
-      it('should have sendPayload function', () => {
-        expect(typeof webexPlugin.outbound.sendPayload).toBe('function');
-      });
-
-      describe('sendPayload', () => {
-        beforeEach(() => {
-          vi.clearAllMocks();
-        });
-
-        const account: ResolvedWebexAccount = {
-          accountId: 'default',
-          enabled: true,
-          configured: true,
-          config: {
-            token: 'test-token',
-            webhookUrl: 'https://example.com/webhook',
-            dmPolicy: 'allow',
-          },
-        };
-
-        it('should deliver channelData.webex.blocks as a card attachment', async () => {
-          mockFetch.mockResolvedValueOnce(
-            createMockResponse({
-              id: 'message-123',
-              roomId: 'room-123',
-              roomType: 'group',
-              personId: 'person-123',
-              personEmail: 'person@example.com',
-              created: '2024-01-01T00:00:00.000Z',
-            })
-          );
-
-          const result = await webexPlugin.outbound.sendPayload!({
-            to: 'room-123',
-            payload: {
-              channelData: {
-                webex: { blocks: [{ type: 'TextBlock', text: 'Hello' }] },
-              },
-            },
-            account,
-          });
-
-          expect(result).toEqual({
-            channel: 'webex',
-            messageId: 'message-123',
-            roomId: 'room-123',
-          });
-
-          expect(mockFetch).toHaveBeenCalledWith(
-            expect.any(String),
-            expect.objectContaining({
-              body: expect.stringContaining('application/vnd.microsoft.card.adaptive'),
-            })
-          );
-        });
-
-        it('should carry the caption from payload.text alongside card blocks', async () => {
-          mockFetch.mockResolvedValueOnce(
-            createMockResponse({
-              id: 'message-123',
-              roomId: 'room-123',
-              roomType: 'group',
-              personId: 'person-123',
-              personEmail: 'person@example.com',
-              created: '2024-01-01T00:00:00.000Z',
-            })
-          );
-
-          await webexPlugin.outbound.sendPayload!({
-            to: 'room-123',
-            payload: {
-              text: 'Here is your card',
-              channelData: {
-                webex: { blocks: [{ type: 'TextBlock', text: 'Hello' }] },
-              },
-            },
-            account,
-          });
-
-          const call = mockFetch.mock.calls[0];
-          const body = JSON.parse((call[1] as { body: string }).body);
-          expect(body.text).toBe('Here is your card');
-        });
-
-        it('should throw instead of silently no-op when the payload has no text or blocks', async () => {
-          await expect(
-            webexPlugin.outbound.sendPayload!({
-              to: 'room-123',
-              payload: {},
-              account,
-            })
-          ).rejects.toThrow(/must have content/i);
-
-          expect(mockFetch).not.toHaveBeenCalled();
-        });
       });
     });
 

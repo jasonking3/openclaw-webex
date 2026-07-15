@@ -13,7 +13,7 @@ import type {
 
 import { WebexSender } from "./send";
 import { WebexWebhookHandler } from "./webhook";
-import type { AdaptiveCard, WebexChannelConfig, WebexWebhookPayload } from "./types";
+import type { WebexChannelConfig, WebexWebhookPayload } from "./types";
 
 // Store the plugin runtime for use in HTTP handlers
 let pluginRuntime: PluginRuntime | null = null;
@@ -533,38 +533,6 @@ export const webexPlugin: ChannelPlugin<ResolvedWebexAccount> = {
           text,
           files: mediaUrl ? [mediaUrl] : undefined,
         },
-        parentId: replyToId,
-      });
-
-      return {
-        channel: "webex",
-        messageId: result.id,
-        roomId: result.roomId,
-      };
-    },
-
-    sendPayload: async ({ to, payload, text, account, replyToId }) => {
-      const sender = new WebexSender(account.config);
-
-      // Core passes card body blocks via channelData.webex.blocks; route to
-      // WebexSender as an AdaptiveCard when present.
-      const blocks = (payload?.channelData?.webex as Record<string, unknown> | undefined)
-        ?.blocks as unknown[] | undefined;
-      const card = blocks
-        ? ({ type: "AdaptiveCard", version: "1.3", body: blocks } as AdaptiveCard)
-        : undefined;
-
-      // The caption can arrive either as the top-level `text` opt or nested
-      // in `payload.text` alongside channelData - honor whichever is set.
-      const resolvedText = text ?? payload?.text;
-
-      // No early "nothing to send" short-circuit here: sender.send() already
-      // throws "Message must have content" via validateMessageRequest when
-      // both card and resolvedText are empty, so an empty payload surfaces
-      // as an error instead of a silent no-op.
-      const result = await sender.send({
-        to,
-        content: { card, text: resolvedText },
         parentId: replyToId,
       });
 

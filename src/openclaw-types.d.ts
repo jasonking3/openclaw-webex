@@ -219,22 +219,6 @@ declare module "openclaw/plugin-sdk" {
       messageId?: string;
       roomId?: string;
     }>;
-    sendPayload?(opts: {
-      to: string;
-      payload: {
-        text?: string;
-        channelData?: Record<string, unknown>;
-      };
-      text?: string;
-      account: TAccount;
-      deps?: unknown;
-      replyToId?: string;
-      threadId?: string | number;
-    }): Promise<{
-      channel: string;
-      messageId?: string;
-      roomId?: string;
-    }>;
     sendPoll?(opts: {
       to: string;
       poll: unknown;
