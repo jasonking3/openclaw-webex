@@ -184,22 +184,34 @@ declare module "openclaw/plugin-sdk" {
   export interface ChannelMessagingAdapter {
     normalizeTarget?(raw: string): string | undefined;
     targetResolver?: {
-      looksLikeId(raw: string): boolean;
+      /**
+       * Called as looksLikeId(raw, normalized) - raw is the un-normalized
+       * user input (still carrying any "webex:" prefix); normalized is the
+       * result of normalizeTarget. Check `normalized`, not `raw`.
+       */
+      looksLikeId(raw: string, normalized: string): boolean;
       hint: string;
     };
   }
 
+  /**
+   * NOTE: the real SDK never passes a pre-resolved account into these hooks -
+   * only `cfg` (the full core config) and `accountId`. Implementations must
+   * resolve the account themselves (e.g. via the same helper used by
+   * config.resolveAccount).
+   */
   export interface ChannelOutboundAdapter<TAccount = unknown> {
     deliveryMode: "direct" | "queued";
     chunker?(text: string, limit: number): string[];
     chunkerMode?: "markdown" | "text";
     textChunkLimit?: number;
     sendText(opts: {
+      cfg: unknown;
       to: string;
       text: string;
-      account: TAccount;
+      accountId?: string | null;
       deps?: unknown;
-      replyToId?: string;
+      replyToId?: string | null;
       threadId?: string | number;
     }): Promise<{
       channel: string;
@@ -207,12 +219,13 @@ declare module "openclaw/plugin-sdk" {
       roomId?: string;
     }>;
     sendMedia?(opts: {
+      cfg: unknown;
       to: string;
       text?: string;
       mediaUrl?: string;
-      account: TAccount;
+      accountId?: string | null;
       deps?: unknown;
-      replyToId?: string;
+      replyToId?: string | null;
       threadId?: string | number;
     }): Promise<{
       channel: string;

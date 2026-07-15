@@ -492,8 +492,11 @@ export const webexPlugin: ChannelPlugin<ResolvedWebexAccount> = {
       return normalized || undefined;
     },
     targetResolver: {
-      looksLikeId: (raw) => {
-        const trimmed = raw.trim();
+      // The host calls looksLikeId(raw, normalized) - raw still carries the
+      // "webex:" prefix stripped by normalizeTarget above, so check the
+      // normalized form (falling back to raw if it's ever omitted).
+      looksLikeId: (raw, normalized) => {
+        const trimmed = (normalized ?? raw).trim();
         if (!trimmed) return false;
         // Webex IDs are base64-encoded and start with a specific prefix
         if (trimmed.startsWith("Y2lzY29zcGFyazovL3")) return true;
@@ -508,13 +511,17 @@ export const webexPlugin: ChannelPlugin<ResolvedWebexAccount> = {
     deliveryMode: "direct",
     textChunkLimit: 7000, // Webex has a 7439 byte limit
 
-    sendText: async ({ to, text, account, replyToId }) => {
+    // The host never passes a pre-resolved account into outbound hooks - only
+    // cfg + accountId - so every method below must resolve it itself via
+    // resolveWebexAccount, the same helper config.resolveAccount uses.
+    sendText: async ({ cfg, to, text, accountId, replyToId }) => {
+      const account = resolveWebexAccount({ cfg: cfg as CoreConfig, accountId: accountId ?? undefined });
       const sender = new WebexSender(account.config);
 
       const result = await sender.send({
         to,
         content: { text },
-        parentId: replyToId,
+        parentId: replyToId ?? undefined,
       });
 
       return {
@@ -524,7 +531,8 @@ export const webexPlugin: ChannelPlugin<ResolvedWebexAccount> = {
       };
     },
 
-    sendMedia: async ({ to, text, mediaUrl, account, replyToId }) => {
+    sendMedia: async ({ cfg, to, text, mediaUrl, accountId, replyToId }) => {
+      const account = resolveWebexAccount({ cfg: cfg as CoreConfig, accountId: accountId ?? undefined });
       const sender = new WebexSender(account.config);
 
       const result = await sender.send({
@@ -533,7 +541,7 @@ export const webexPlugin: ChannelPlugin<ResolvedWebexAccount> = {
           text,
           files: mediaUrl ? [mediaUrl] : undefined,
         },
-        parentId: replyToId,
+        parentId: replyToId ?? undefined,
       });
 
       return {

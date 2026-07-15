@@ -16,6 +16,24 @@ import defaultExport, {
   webexPlugin,
 } from './index';
 
+// Mock node-fetch for the outbound-adapter behavioral tests below
+vi.mock('node-fetch', () => ({
+  default: vi.fn(),
+  Response: vi.fn(),
+}));
+
+import fetch from 'node-fetch';
+const mockFetch = fetch as unknown as ReturnType<typeof vi.fn>;
+
+function createMockResponse(data: unknown) {
+  return {
+    ok: true,
+    status: 200,
+    statusText: 'OK',
+    json: vi.fn().mockResolvedValue(data),
+  };
+}
+
 describe('index exports', () => {
   describe('named exports', () => {
     it('should export WebexChannel class', () => {
@@ -153,6 +171,29 @@ describe('index exports', () => {
       });
     });
 
+    describe('messaging adapter', () => {
+      describe('targetResolver.looksLikeId', () => {
+        // The real host calls looksLikeId(raw, normalized), where `raw`
+        // still carries the "webex:" prefix and `normalized` has it
+        // stripped - looksLikeId must check `normalized`, not `raw`.
+        it('should accept a base64 Webex ID via the normalized argument even when raw still has the webex: prefix', () => {
+          const raw = 'webex:Y2lzY29zcGFyazovL3VzL1JPT00vYWJj';
+          const normalized = 'Y2lzY29zcGFyazovL3VzL1JPT00vYWJj';
+          expect(webexPlugin.messaging!.targetResolver!.looksLikeId(raw, normalized)).toBe(true);
+        });
+
+        it('should accept an email via the normalized argument', () => {
+          expect(
+            webexPlugin.messaging!.targetResolver!.looksLikeId('webex:user@example.com', 'user@example.com')
+          ).toBe(true);
+        });
+
+        it('should reject a normalized value that is neither a Webex ID nor an email', () => {
+          expect(webexPlugin.messaging!.targetResolver!.looksLikeId('webex:nonsense', 'nonsense')).toBe(false);
+        });
+      });
+    });
+
     describe('outbound adapter', () => {
       it('should have deliveryMode', () => {
         expect(webexPlugin.outbound.deliveryMode).toBe('direct');
@@ -168,6 +209,75 @@ describe('index exports', () => {
 
       it('should have sendMedia function', () => {
         expect(typeof webexPlugin.outbound.sendMedia).toBe('function');
+      });
+
+      // The real host never passes a pre-resolved account into outbound
+      // hooks - only cfg + accountId - so tests must mirror that shape to
+      // catch a regression back to destructuring `account` directly.
+      describe('account resolution from cfg + accountId', () => {
+        const cfg = {
+          channels: {
+            webex: {
+              token: 'test-token',
+              webhookUrl: 'https://example.com/webhook',
+              dmPolicy: 'allow' as const,
+            },
+          },
+        };
+        const accountId = 'default';
+
+        it('sendText should resolve the account from cfg/accountId and send', async () => {
+          mockFetch.mockResolvedValueOnce(
+            createMockResponse({
+              id: 'message-123',
+              roomId: 'room-123',
+              roomType: 'group',
+              personId: 'person-123',
+              personEmail: 'person@example.com',
+              created: '2024-01-01T00:00:00.000Z',
+            })
+          );
+
+          const result = await webexPlugin.outbound.sendText({
+            cfg,
+            to: 'room-123',
+            text: 'hello from cron',
+            accountId,
+          });
+
+          expect(result).toEqual({
+            channel: 'webex',
+            messageId: 'message-123',
+            roomId: 'room-123',
+          });
+        });
+
+        it('sendMedia should resolve the account from cfg/accountId and send', async () => {
+          mockFetch.mockResolvedValueOnce(
+            createMockResponse({
+              id: 'message-456',
+              roomId: 'room-123',
+              roomType: 'group',
+              personId: 'person-123',
+              personEmail: 'person@example.com',
+              created: '2024-01-01T00:00:00.000Z',
+            })
+          );
+
+          const result = await webexPlugin.outbound.sendMedia!({
+            cfg,
+            to: 'room-123',
+            text: 'hello with media',
+            mediaUrl: 'https://example.com/file.png',
+            accountId,
+          });
+
+          expect(result).toEqual({
+            channel: 'webex',
+            messageId: 'message-456',
+            roomId: 'room-123',
+          });
+        });
       });
     });
 
