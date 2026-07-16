@@ -195,6 +195,13 @@ export function createWebhookHandler(): (req: IncomingMessage, res: ServerRespon
           OriginatingChannel: "webex",
           OriginatingTo: `webex:${envelope.conversationId}`,
           MessageThreadId: envelope.metadata.parentId,
+          // Core defaults CommandAuthorized to false ("default-deny when upstream
+          // forgets to populate it") when a channel omits it, silently no-op'ing every
+          // slash command (/verbose, /reasoning, /status, ...). DMs are already gated by
+          // dmPolicy in webhook.ts before an envelope reaches here, and this plugin has
+          // no separate per-sender allowlist for group commands, so authorizing everyone
+          // who can already message the bot doesn't widen the plugin's trust boundary.
+          CommandAuthorized: true,
         };
 
         // Use the plugin runtime's dispatch function (cast to any for internal API)
