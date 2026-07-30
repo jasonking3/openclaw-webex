@@ -410,6 +410,104 @@ describe('WebexWebhookHandler', () => {
         const envelope = await allowHandler.handleWebhook(payload);
         expect(envelope).toBeNull();
       });
+
+      it('should treat the canonical "allowlist" spelling like "allowlisted"', async () => {
+        // 'allowlist' is OpenClaw's canonical spelling and a valid DmPolicy;
+        // it must gate on allowFrom, not silently drop every DM.
+        const allowHandler = new WebexWebhookHandler({
+          ...config,
+          dmPolicy: 'allowlist' as const,
+          allowFrom: ['person-123'],
+        });
+        mockFetch.mockResolvedValueOnce(createMockResponse(mockBotInfo));
+        await allowHandler.initialize();
+        mockFetch.mockClear();
+
+        mockFetch.mockResolvedValueOnce(createMockResponse({ ...mockMessage, roomType: 'direct' }));
+
+        const allowed = await allowHandler.handleWebhook(createPayload({
+          data: {
+            id: 'message-123',
+            roomId: 'room-123',
+            roomType: 'direct',
+            personId: 'person-123',
+            personEmail: 'person@example.com',
+            created: '2024-01-01T00:00:00.000Z',
+          },
+        }));
+        expect(allowed).not.toBeNull();
+      });
+
+      it('should deny a non-allowlisted person under the "allowlist" spelling', async () => {
+        const allowHandler = new WebexWebhookHandler({
+          ...config,
+          dmPolicy: 'allowlist' as const,
+          allowFrom: ['other-person'],
+        });
+        mockFetch.mockResolvedValueOnce(createMockResponse(mockBotInfo));
+        await allowHandler.initialize();
+
+        const envelope = await allowHandler.handleWebhook(createPayload({
+          data: {
+            id: 'message-123',
+            roomId: 'room-123',
+            roomType: 'direct',
+            personId: 'person-123',
+            personEmail: 'person@example.com',
+            created: '2024-01-01T00:00:00.000Z',
+          },
+        }));
+        expect(envelope).toBeNull();
+      });
+
+      it('should allow a pre-approved sender under the "pairing" policy', async () => {
+        // 'pairing' has no webhook-layer handshake, so it gates on allowFrom
+        // like the allowlist policies rather than hitting the silent default.
+        const pairingHandler = new WebexWebhookHandler({
+          ...config,
+          dmPolicy: 'pairing' as const,
+          allowFrom: ['person-123'],
+        });
+        mockFetch.mockResolvedValueOnce(createMockResponse(mockBotInfo));
+        await pairingHandler.initialize();
+        mockFetch.mockClear();
+
+        mockFetch.mockResolvedValueOnce(createMockResponse({ ...mockMessage, roomType: 'direct' }));
+
+        const allowed = await pairingHandler.handleWebhook(createPayload({
+          data: {
+            id: 'message-123',
+            roomId: 'room-123',
+            roomType: 'direct',
+            personId: 'person-123',
+            personEmail: 'person@example.com',
+            created: '2024-01-01T00:00:00.000Z',
+          },
+        }));
+        expect(allowed).not.toBeNull();
+      });
+
+      it('should deny an unknown sender under the "pairing" policy', async () => {
+        const pairingHandler = new WebexWebhookHandler({
+          ...config,
+          dmPolicy: 'pairing' as const,
+          allowFrom: ['other-person'],
+        });
+        mockFetch.mockResolvedValueOnce(createMockResponse(mockBotInfo));
+        await pairingHandler.initialize();
+
+        const envelope = await pairingHandler.handleWebhook(createPayload({
+          data: {
+            id: 'message-123',
+            roomId: 'room-123',
+            roomType: 'direct',
+            personId: 'person-123',
+            personEmail: 'person@example.com',
+            created: '2024-01-01T00:00:00.000Z',
+          },
+        }));
+        expect(envelope).toBeNull();
+      });
     });
 
     describe('normalizeMessage', () => {

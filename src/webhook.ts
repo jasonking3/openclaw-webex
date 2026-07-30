@@ -93,7 +93,17 @@ export class WebexWebhookHandler {
   }
 
   /**
-   * Check if the sender is allowed based on DM policy
+   * Check if the sender is allowed based on DM policy.
+   *
+   * This is the *only* DM gate for the plugin: OpenClaw core's dispatch
+   * pipeline does not re-apply dmPolicy, so any value this method fails to
+   * recognize would silently drop every direct message (commands included)
+   * before it reaches core. The switch below is therefore exhaustive over all
+   * valid `DmPolicy` values, and both spellings of the allowlist policy
+   * (`'allowlist'`, the OpenClaw-canonical form, and `'allowlisted'`, the
+   * manifest/schema form) are handled identically so the two config surfaces
+   * can't disagree. `default` is reached only by genuinely invalid config and
+   * fails safe (deny).
    */
   private isAllowedSender(data: WebexWebhookData): boolean {
     switch (this.config.dmPolicy) {
@@ -101,7 +111,13 @@ export class WebexWebhookHandler {
         return true;
       case 'deny':
         return false;
+      case 'allowlist':
       case 'allowlisted':
+      case 'pairing':
+        // 'pairing' has no interactive handshake at the webhook layer, so it
+        // gates on `allowFrom` exactly like the allowlist policies: only
+        // pre-approved senders pass; unknown senders are held back rather than
+        // let through to a channel that can't complete a pairing flow.
         if (!this.config.allowFrom || this.config.allowFrom.length === 0) {
           return false;
         }
