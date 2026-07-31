@@ -58,6 +58,11 @@
             "type": "number",
             "description": "Delay between retries in milliseconds",
             "default": 1000
+          },
+          "seenIndicator": {
+            "type": "boolean",
+            "description": "Post an immediate \"seen\" message on inbound and edit it in place with the reply (Webex bots can't emit native read receipts). Disable to avoid an extra visible message, e.g. in group spaces.",
+            "default": true
           }
         },
         "required": ["token", "webhookUrl"]
@@ -99,6 +104,9 @@
         },
         "retryDelayMs": {
           "label": "Retry Delay (ms)"
+        },
+        "seenIndicator": {
+          "label": "Seen Indicator"
         }
       }
     }

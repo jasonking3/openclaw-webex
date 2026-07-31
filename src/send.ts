@@ -7,6 +7,7 @@ import type {
   WebexChannelConfig,
   WebexMessage,
   CreateMessageRequest,
+  EditMessageRequest,
   OpenClawOutboundMessage,
   WebexApiError,
   RetryOptions,
@@ -104,6 +105,43 @@ export class WebexSender {
       parentId,
       text,
       markdown,
+    });
+  }
+
+  /**
+   * Edit a previously sent message by ID.
+   *
+   * The Webex edit endpoint (`PUT /messages/{id}`) requires the message's
+   * `roomId` plus the replacement `text` and/or `markdown`. Two API limits to
+   * be aware of at the call site: edits of messages containing files or
+   * attachments are not supported, and a message can be edited at most 10
+   * times.
+   */
+  async editMessage(
+    messageId: string,
+    roomId: string,
+    content: { text?: string; markdown?: string }
+  ): Promise<WebexMessage> {
+    if (!content.text && !content.markdown) {
+      throw new Error('Edit must have content: text or markdown');
+    }
+    // Same 7439-byte text ceiling the create endpoint enforces.
+    if (content.text && Buffer.byteLength(content.text, 'utf8') > 7439) {
+      throw new Error('Message text exceeds maximum size of 7439 bytes');
+    }
+
+    const body: EditMessageRequest = { roomId };
+    if (content.text) {
+      body.text = content.text;
+    }
+    if (content.markdown) {
+      body.markdown = content.markdown;
+    }
+
+    return this.request<WebexMessage>({
+      method: 'PUT',
+      path: `/messages/${messageId}`,
+      body,
     });
   }
 

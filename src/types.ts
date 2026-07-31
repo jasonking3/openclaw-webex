@@ -32,6 +32,16 @@ export interface WebexChannelConfig {
 
   /** Retry delay in milliseconds */
   retryDelayMs?: number;
+
+  /**
+   * Post an immediate "seen" acknowledgement message on inbound and edit it
+   * in place with the reply, giving the sender a visual signal that the bot
+   * received their message before the (possibly slow) reply is ready. Webex
+   * bots cannot emit native read receipts, so this is the closest available
+   * approximation. Defaults to enabled; set false to suppress (e.g. to avoid
+   * an extra visible message in group spaces).
+   */
+  seenIndicator?: boolean;
 }
 
 // ============================================================================
@@ -169,6 +179,13 @@ export interface CreateMessageRequest {
   files?: string[];
   attachments?: WebexAttachment[];
   parentId?: string;
+}
+
+export interface EditMessageRequest {
+  /** The room the message belongs to (required by the Webex edit endpoint) */
+  roomId: string;
+  text?: string;
+  markdown?: string;
 }
 
 export interface CreateWebhookRequest {

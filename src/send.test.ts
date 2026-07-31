@@ -376,6 +376,56 @@ describe('WebexSender', () => {
     });
   });
 
+  describe('editMessage', () => {
+    it('should edit a message by ID with text and roomId', async () => {
+      mockFetch.mockResolvedValueOnce(createMockResponse(mockMessage));
+
+      const result = await sender.editMessage('message-123', 'room-123', { text: 'Updated!' });
+
+      expect(result.id).toBe('message-123');
+      expect(mockFetch).toHaveBeenCalledWith(
+        'https://webexapis.com/v1/messages/message-123',
+        expect.objectContaining({
+          method: 'PUT',
+          body: expect.stringContaining('"roomId":"room-123"'),
+        })
+      );
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          body: expect.stringContaining('"text":"Updated!"'),
+        })
+      );
+    });
+
+    it('should edit a message with markdown', async () => {
+      mockFetch.mockResolvedValueOnce(createMockResponse(mockMessage));
+
+      await sender.editMessage('message-123', 'room-123', { markdown: '**Updated!**' });
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          body: expect.stringContaining('"markdown":"**Updated!**"'),
+        })
+      );
+    });
+
+    it('should throw when no content is provided', async () => {
+      await expect(sender.editMessage('message-123', 'room-123', {})).rejects.toThrow(
+        'Edit must have content'
+      );
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it('should throw when text exceeds max size', async () => {
+      await expect(
+        sender.editMessage('message-123', 'room-123', { text: 'x'.repeat(8000) })
+      ).rejects.toThrow('exceeds maximum size');
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+  });
+
   describe('validation', () => {
     it('should throw error when no target specified', async () => {
       mockFetch.mockResolvedValueOnce(createMockResponse(mockMessage));
