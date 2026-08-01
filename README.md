@@ -77,8 +77,24 @@ const config: WebexChannelConfig = {
 
   // Optional: Retry delay in ms (default: 1000)
   retryDelayMs: 1000,
+
+  // Optional: Post an immediate "seen" message on inbound and edit it in
+  // place with the reply, since Webex bots can't emit native read receipts
+  // (default: true). See "Seen indicator" below. Set false to suppress the
+  // extra message, e.g. in group spaces.
+  seenIndicator: true,
 };
 ```
+
+### Seen indicator
+
+Webex bots cannot emit the native "seen" read receipt that regular users produce, so a message the bot has received shows no acknowledgement until it actually replies — which can be a long, silent gap while the agent works.
+
+When `seenIndicator` is enabled (the default), the OpenClaw plugin posts an immediate `👀 Seen — thinking…` placeholder on inbound and then **edits that same message in place** with the first block of the reply (later blocks are posted as new messages). The sender gets an instant "received" signal with no leftover placeholder. It's best-effort — if the placeholder can't be posted, or the edit fails (Webex allows at most 10 edits per message and can't edit messages with attachments), the reply is sent as a normal message instead; if the reply turns out empty, the placeholder is deleted.
+
+Set `seenIndicator: false` to turn this off — for example in group spaces, where the placeholder is visible to everyone.
+
+> **Note:** this behavior lives in the OpenClaw plugin's reply pipeline (`channels.webex.seenIndicator`, per account). When using the standalone `WebexChannel` class you drive your own send loop, so the flag has no effect there — replicate the pattern with `sender.editMessage()` if you want it.
 
 ## Usage
 
