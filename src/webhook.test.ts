@@ -568,6 +568,195 @@ describe('WebexWebhookHandler', () => {
         expect(envelope?.metadata.mentions).toEqual(['user-1', 'user-2']);
       });
 
+      describe('bot mention stripping', () => {
+        // Webex renders an @mention as the bot's name inside the plain-text
+        // `text` field, so "@Test Bot /new" arrives as "Test Bot /new". Left in
+        // place it hides the leading "/" from OpenClaw's command parser.
+        const mentioned = (overrides: Partial<WebexMessage>): WebexMessage => ({
+          ...mockMessage,
+          mentionedPeople: ['bot-123'],
+          ...overrides,
+        });
+
+        const normalize = async (message: WebexMessage) => {
+          mockFetch.mockResolvedValueOnce(createMockResponse(message));
+          return handler.handleWebhook(createPayload());
+        };
+
+        it('should strip a leading bot mention so a command starts with a slash', async () => {
+          const envelope = await normalize(mentioned({
+            text: 'Test Bot /new',
+            html: '<p><spark-mention data-object-type="person" data-object-id="bot-123">Test Bot</spark-mention> /new</p>',
+          }));
+
+          expect(envelope?.content.text).toBe('/new');
+        });
+
+        it('should strip a leading bot mention from ordinary prose', async () => {
+          const envelope = await normalize(mentioned({
+            text: 'Test Bot what is the status?',
+            html: '<p><spark-mention data-object-id="bot-123">Test Bot</spark-mention> what is the status?</p>',
+          }));
+
+          expect(envelope?.content.text).toBe('what is the status?');
+        });
+
+        it('should strip a separator following the mention', async () => {
+          const envelope = await normalize(mentioned({
+            text: 'Test Bot: /new',
+            html: '<p><spark-mention data-object-id="bot-123">Test Bot</spark-mention>: /new</p>',
+          }));
+
+          expect(envelope?.content.text).toBe('/new');
+        });
+
+        it('should use the mention text rendered in html over the bot display name', async () => {
+          // A user can be mentioned under a name that differs from the bot's
+          // own displayName (e.g. an org-specific alias).
+          const envelope = await normalize(mentioned({
+            text: 'OpenClaw Helper /new',
+            html: '<p><spark-mention data-object-id="bot-123">OpenClaw Helper</spark-mention> /new</p>',
+          }));
+
+          expect(envelope?.content.text).toBe('/new');
+        });
+
+        it('should decode html entities in the mention text', async () => {
+          const envelope = await normalize(mentioned({
+            text: 'Ops & Bots /new',
+            html: '<p><spark-mention data-object-id="bot-123">Ops &amp; Bots</spark-mention> /new</p>',
+          }));
+
+          expect(envelope?.content.text).toBe('/new');
+        });
+
+        it('should match a base64 person id against the uuid used in html', async () => {
+          // ciscospark://us/PEOPLE/11111111-2222-3333-4444-555555555555
+          const base64BotId = Buffer.from(
+            'ciscospark://us/PEOPLE/11111111-2222-3333-4444-555555555555'
+          ).toString('base64');
+          mockFetch.mockResolvedValueOnce(
+            createMockResponse({ ...mockBotInfo, id: base64BotId })
+          );
+          const b64Handler = new WebexWebhookHandler(config);
+          await b64Handler.initialize();
+
+          mockFetch.mockResolvedValueOnce(createMockResponse({
+            ...mockMessage,
+            mentionedPeople: [base64BotId],
+            text: 'Test Bot /new',
+            html: '<p><spark-mention data-object-id="11111111-2222-3333-4444-555555555555">Test Bot</spark-mention> /new</p>',
+          }));
+
+          const envelope = await b64Handler.handleWebhook(createPayload());
+
+          expect(envelope?.content.text).toBe('/new');
+        });
+
+        it('should fall back to the bot display name when html is absent', async () => {
+          const envelope = await normalize(mentioned({
+            text: 'Test Bot /new',
+            html: undefined,
+          }));
+
+          expect(envelope?.content.text).toBe('/new');
+        });
+
+        it('should fall back to the bot nickName when html is absent', async () => {
+          mockFetch.mockResolvedValueOnce(
+            createMockResponse({ ...mockBotInfo, nickName: 'Testy' })
+          );
+          const nickHandler = new WebexWebhookHandler(config);
+          await nickHandler.initialize();
+
+          mockFetch.mockResolvedValueOnce(createMockResponse({
+            ...mockMessage,
+            mentionedPeople: ['bot-123'],
+            text: 'Testy /new',
+          }));
+
+          const envelope = await nickHandler.handleWebhook(createPayload());
+
+          expect(envelope?.content.text).toBe('/new');
+        });
+
+        it('should leave text alone when the bot is not mentioned', async () => {
+          const envelope = await normalize({
+            ...mockMessage,
+            mentionedPeople: ['someone-else'],
+            text: 'Test Bot is a bot',
+            html: '<p><spark-mention data-object-id="someone-else">Someone</spark-mention> Test Bot is a bot</p>',
+          });
+
+          expect(envelope?.content.text).toBe('Test Bot is a bot');
+        });
+
+        it('should leave text alone when another person is mentioned first', async () => {
+          const envelope = await normalize(mentioned({
+            mentionedPeople: ['someone-else', 'bot-123'],
+            text: 'Someone ask Test Bot about it',
+            html: '<p><spark-mention data-object-id="someone-else">Someone</spark-mention> ask <spark-mention data-object-id="bot-123">Test Bot</spark-mention> about it</p>',
+          }));
+
+          expect(envelope?.content.text).toBe('Someone ask Test Bot about it');
+        });
+
+        it('should not strip a name that only prefixes a longer word', async () => {
+          mockFetch.mockResolvedValueOnce(
+            createMockResponse({ ...mockBotInfo, displayName: 'Test' })
+          );
+          const shortNameHandler = new WebexWebhookHandler(config);
+          await shortNameHandler.initialize();
+
+          mockFetch.mockResolvedValueOnce(createMockResponse({
+            ...mockMessage,
+            mentionedPeople: ['bot-123'],
+            text: 'Testing 1 2 3',
+          }));
+
+          const envelope = await shortNameHandler.handleWebhook(createPayload());
+
+          expect(envelope?.content.text).toBe('Testing 1 2 3');
+        });
+
+        it('should leave a DM without a mention untouched', async () => {
+          const envelope = await normalize({
+            ...mockMessage,
+            roomType: 'direct',
+            text: '/new',
+          });
+
+          expect(envelope?.content.text).toBe('/new');
+        });
+
+        it('should yield empty text for a bare mention with no message', async () => {
+          const envelope = await normalize(mentioned({
+            text: 'Test Bot',
+            html: '<p><spark-mention data-object-id="bot-123">Test Bot</spark-mention></p>',
+          }));
+
+          expect(envelope?.content.text).toBe('');
+        });
+
+        it('should preserve the original text in metadata.raw', async () => {
+          const envelope = await normalize(mentioned({
+            text: 'Test Bot /new',
+            html: '<p><spark-mention data-object-id="bot-123">Test Bot</spark-mention> /new</p>',
+          }));
+
+          expect((envelope?.metadata.raw as WebexMessage).text).toBe('Test Bot /new');
+        });
+
+        it('should handle a message with no text at all', async () => {
+          const envelope = await normalize(mentioned({
+            text: undefined,
+            files: ['https://example.com/file.pdf'],
+          }));
+
+          expect(envelope?.content.text).toBeUndefined();
+        });
+      });
+
       it('should include parentId in metadata', async () => {
         const messageWithParent: WebexMessage = {
           ...mockMessage,
