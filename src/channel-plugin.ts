@@ -54,6 +54,7 @@ interface WebexChannelSection {
   apiBaseUrl?: string;
   maxRetries?: number;
   retryDelayMs?: number;
+  seenIndicator?: boolean;
   accounts?: Record<string, WebexAccountConfig>;
 }
 
@@ -68,9 +69,18 @@ interface WebexAccountConfig {
   apiBaseUrl?: string;
   maxRetries?: number;
   retryDelayMs?: number;
+  seenIndicator?: boolean;
 }
 
 const DEFAULT_ACCOUNT_ID = "default";
+
+/**
+ * Markdown for the immediate "seen" acknowledgement posted on inbound and then
+ * edited in place with the reply. Webex bots cannot emit native read receipts,
+ * so this stand-in message is the closest signal available that the bot has
+ * received a message before it finishes composing a reply.
+ */
+const SEEN_INDICATOR_MARKDOWN = "_👀 Seen — thinking…_";
 
 /** Webhook target registration for HTTP handler */
 type WebexWebhookTarget = {
@@ -210,19 +220,61 @@ export function createWebhookHandler(): (req: IncomingMessage, res: ServerRespon
         if (dispatchReply) {
           // Create a sender for replies
           const sender = new WebexSender(account.config);
-          
+
+          // Post an immediate "seen" acknowledgement the first reply block will
+          // edit in place, so the sender gets a visual signal that the bot
+          // received their message before the (possibly slow) reply is ready.
+          // Best-effort and enabled by default; a failure here must not block
+          // the actual reply, so we fall back to plain sends if it doesn't post.
+          let placeholderId: string | undefined;
+          if (account.config.seenIndicator !== false) {
+            try {
+              const ack = await sender.send({
+                to: envelope.conversationId,
+                content: { markdown: SEEN_INDICATOR_MARKDOWN },
+                parentId: envelope.metadata.parentId,
+              });
+              placeholderId = ack.id;
+            } catch (err) {
+              console.warn(
+                `[webex:${account.accountId}] failed to post seen indicator: ${err instanceof Error ? err.message : err}`
+              );
+            }
+          }
+
           await dispatchReply({
             ctx: ctxPayload,
             cfg,
             dispatcherOptions: {
               deliver: async (payload: { text?: string; media?: string }) => {
-                if (payload.text) {
-                  await sender.send({
-                    to: envelope.conversationId,
-                    content: { text: payload.text },
-                    parentId: envelope.metadata.parentId,
-                  });
+                if (!payload.text) {
+                  return;
                 }
+                // The first delivered block replaces the "seen" placeholder in
+                // place; any further blocks are posted as new messages. Clearing
+                // placeholderId first keeps this correct if deliver is ever
+                // invoked concurrently.
+                if (placeholderId) {
+                  const id = placeholderId;
+                  placeholderId = undefined;
+                  try {
+                    await sender.editMessage(id, envelope.metadata.roomId, {
+                      text: payload.text,
+                    });
+                    return;
+                  } catch (err) {
+                    // Edit failed (e.g. hit Webex's 10-edit cap): fall through to
+                    // a normal send so the reply still reaches the user.
+                    console.warn(
+                      `[webex:${account.accountId}] failed to edit seen indicator, sending new message: ${err instanceof Error ? err.message : err}`
+                    );
+                  }
+                }
+                await sender.send({
+                  to: envelope.conversationId,
+                  content: { text: payload.text },
+                  parentId: envelope.metadata.parentId,
+                });
               },
               onError: (err: Error) => {
                 console.error(`[webex:${account.accountId}] reply dispatch error: ${err.message}`);
@@ -230,6 +282,21 @@ export function createWebhookHandler(): (req: IncomingMessage, res: ServerRespon
             },
             replyOptions: {},
           });
+
+          // Nothing was delivered (e.g. an empty reply): clean up the dangling
+          // placeholder so we don't leave a "seen, thinking…" message with no
+          // reply behind it.
+          if (placeholderId) {
+            const id = placeholderId;
+            placeholderId = undefined;
+            try {
+              await sender.deleteMessage(id);
+            } catch (err) {
+              console.warn(
+                `[webex:${account.accountId}] failed to clean up unused seen indicator: ${err instanceof Error ? err.message : err}`
+              );
+            }
+          }
         } else {
           console.warn(`[webex:${account.accountId}] dispatchReply not available in plugin runtime`);
         }
@@ -313,6 +380,7 @@ function resolveWebexAccount(opts: {
         apiBaseUrl: namedAccount.apiBaseUrl ?? section.apiBaseUrl,
         maxRetries: namedAccount.maxRetries ?? section.maxRetries,
         retryDelayMs: namedAccount.retryDelayMs ?? section.retryDelayMs,
+        seenIndicator: namedAccount.seenIndicator ?? section.seenIndicator,
       },
     };
   }
@@ -335,6 +403,7 @@ function resolveWebexAccount(opts: {
         apiBaseUrl: section.apiBaseUrl,
         maxRetries: section.maxRetries,
         retryDelayMs: section.retryDelayMs,
+        seenIndicator: section.seenIndicator,
       },
     };
   }
