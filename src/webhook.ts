@@ -18,10 +18,68 @@ import type {
 
 const DEFAULT_API_BASE_URL = 'https://webexapis.com/v1';
 
+/**
+ * Matches a `<spark-mention>` at the very start of a message's HTML, past any
+ * block wrappers Webex puts around it. Group 1 is the element's attributes,
+ * group 2 its rendered text (the name the mention shows as, which is also what
+ * lands in the message's plain-text `text` field).
+ */
+const LEADING_SPARK_MENTION =
+  /^(?:\s|<p>|<div>|<span>|<br\s*\/?>)*<spark-mention\b([^>]*)>([\s\S]*?)<\/spark-mention>/i;
+const MENTION_OBJECT_ID = /data-object-id\s*=\s*["']([^"']*)["']/i;
+
+/**
+ * Reduce a Webex person identifier to a comparable key.
+ *
+ * `mentionedPeople` carries base64 IDs (`Y2lzY29zcGFyazovL3...`), while a
+ * mention's `data-object-id` may carry either that same base64 form or the bare
+ * UUID it encodes, depending on how the message was authored. Decoding to the
+ * trailing UUID makes both forms compare equal.
+ */
+function personIdKey(id: string): string {
+  let raw = id;
+  if (id.startsWith('Y2lzY29zcGFyazovL3')) {
+    try {
+      raw = Buffer.from(id, 'base64').toString('utf-8');
+    } catch {
+      raw = id;
+    }
+  }
+  const uuid = /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i.exec(raw);
+  return (uuid ? uuid[1] : raw).toLowerCase();
+}
+
+function decodeHtmlEntities(value: string): string {
+  return value
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&');
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Strip `name` from the start of `text`, along with any separator that follows
+ * it, returning null when the text doesn't start with that name. The negative
+ * lookahead keeps a name from matching a longer word it merely prefixes, so a
+ * bot named "Test" doesn't turn "Testing 1 2 3" into "ing 1 2 3".
+ */
+function stripLeadingName(text: string, name: string): string | null {
+  const pattern = new RegExp(`^\\s*${escapeRegExp(name)}(?![\\p{L}\\p{N}_])[\\s:,]*`, 'iu');
+  const match = pattern.exec(text);
+  return match ? text.slice(match[0].length) : null;
+}
+
 export class WebexWebhookHandler {
   private config: WebexChannelConfig;
   private apiBaseUrl: string;
   private botId: string | null = null;
+  private botNames: string[] = [];
 
   constructor(config: WebexChannelConfig) {
     this.config = config;
@@ -34,6 +92,13 @@ export class WebexWebhookHandler {
   async initialize(): Promise<void> {
     const botInfo = await this.getBotInfo();
     this.botId = botInfo.id;
+    // Kept for the fallback path of stripBotMention() when a message has no
+    // usable HTML to locate the mention in. Longest first so "Test Bot" wins
+    // over a "Test" nickname that prefixes it.
+    this.botNames = [botInfo.displayName, botInfo.nickName]
+      .filter((name): name is string => Boolean(name && name.trim()))
+      .map((name) => name.trim())
+      .sort((a, b) => b.length - a.length);
   }
 
   /**
@@ -148,6 +213,61 @@ export class WebexWebhookHandler {
   }
 
   /**
+   * Remove a leading @mention of this bot from a message's plain text.
+   *
+   * In a group room Webex only delivers messages that @mention the bot, and the
+   * message's `text` field renders that mention as the bot's name: typing
+   * "@Test Bot /new" arrives as `text: "Test Bot /new"`. Anything downstream
+   * that looks at the start of the text — most importantly OpenClaw's slash
+   * command parser, which requires `CommandBody` to begin with "/" — would
+   * otherwise never see the command, which is why commands work in DMs (no
+   * mention, so no prefix) but silently fall through to the agent in group
+   * rooms.
+   *
+   * The mention's rendered text is read out of `html` so the exact string being
+   * stripped is known rather than guessed; `displayName`/`nickName` are only a
+   * fallback for messages that arrive without usable HTML. Only a mention of
+   * *this bot* at the very start is stripped — a message that leads with a
+   * mention of someone else is left alone.
+   */
+  private stripBotMention(message: WebexMessage): string | undefined {
+    const text = message.text;
+    if (!text || !this.botId) {
+      return text;
+    }
+    const botKey = personIdKey(this.botId);
+    if (!message.mentionedPeople?.some((id) => personIdKey(id) === botKey)) {
+      return text;
+    }
+
+    const fromHtml = message.html ? LEADING_SPARK_MENTION.exec(message.html) : null;
+    if (fromHtml) {
+      const objectId = MENTION_OBJECT_ID.exec(fromHtml[1])?.[1];
+      // No id on the element: the bot is mentioned somewhere and this is the
+      // leading mention, so treat it as the bot's.
+      if (objectId && personIdKey(objectId) !== botKey) {
+        return text;
+      }
+      const rendered = decodeHtmlEntities(fromHtml[2].replace(/<[^>]*>/g, '')).trim();
+      if (rendered) {
+        const stripped = stripLeadingName(text, rendered);
+        if (stripped !== null) {
+          return stripped;
+        }
+      }
+    }
+
+    for (const name of this.botNames) {
+      const stripped = stripLeadingName(text, name);
+      if (stripped !== null) {
+        return stripped;
+      }
+    }
+
+    return text;
+  }
+
+  /**
    * Normalize a Webex message to OpenClaw envelope format
    */
   private normalizeMessage(message: WebexMessage): OpenClawEnvelope {
@@ -184,7 +304,7 @@ export class WebexWebhookHandler {
         isBot: false, // Messages from bot are filtered out earlier
       },
       content: {
-        text: message.text,
+        text: this.stripBotMention(message),
         markdown: message.markdown,
         attachments: attachments.length > 0 ? attachments : undefined,
       },
@@ -290,7 +410,12 @@ export class WebexWebhookHandler {
   /**
    * Get bot information
    */
-  private async getBotInfo(): Promise<{ id: string; displayName: string; emails: string[] }> {
+  private async getBotInfo(): Promise<{
+    id: string;
+    displayName: string;
+    nickName?: string;
+    emails: string[];
+  }> {
     const response = await fetch(`${this.apiBaseUrl}/people/me`, {
       method: 'GET',
       headers: {
@@ -303,7 +428,12 @@ export class WebexWebhookHandler {
       throw new Error(`Failed to get bot info: ${response.status} ${response.statusText}`);
     }
 
-    return response.json() as Promise<{ id: string; displayName: string; emails: string[] }>;
+    return response.json() as Promise<{
+      id: string;
+      displayName: string;
+      nickName?: string;
+      emails: string[];
+    }>;
   }
 
   /**
